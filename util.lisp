@@ -75,16 +75,73 @@
         (setf integer (1- (- (logandc2 #b11 integer)))))
       (+ integer (float (/ fraction #x3FFF))))))
 
-(defun read-pstring (stream)
-  "Read a Pascal-style length-prefixed string."
-  (let* ((length (read-uint8 stream))
-         (buf (make-array length :element-type '(unsigned-byte 8)))
-         (string (make-string length)))
-    (read-sequence buf stream)
-    ;; The following could be (map 'string #'code-char buf), but that
-    ;; form benchmarked poorly
-    (dotimes (i length string)
-      (setf (schar string i) (code-char (aref buf i))))))
+
+;;; Writing compound MSB values from an '(unsigned-byte 8) stream
+
+(defvar *ttf-write-output* nil)
+
+(defun write-uint8 (value &optional (stream *ttf-write-output*))
+  ;; Accepts either a stream or an array with a fill-pointer.
+  (check-type value (integer 0 255))
+  (cond
+    ((streamp stream)
+     (write-byte value stream))
+    ((arrayp stream)
+     (vector-push value stream))
+    (t
+     (error "unsupported thing to write into: ~s" stream))))
+
+(defun write-uint32 (value &optional (stream *ttf-write-output*))
+  (check-type value (integer 0 #xffffffff))
+  (write-uint8 (ldb (byte 8 24) value) stream)
+  (write-uint8 (ldb (byte 8 16) value) stream)
+  (write-uint8 (ldb (byte 8  8) value) stream)
+  (write-uint8 (ldb (byte 8  0) value) stream)
+  value)
+
+(defun write-uint16 (value &optional (stream *ttf-write-output*))
+  (check-type value (integer 0 65535))
+  (write-uint8 (ldb (byte 8  8) value) stream)
+  (write-uint8 (ldb (byte 8  0) value) stream)
+  value)
+
+(defun write-int8 (value &optional (stream *ttf-write-output*))
+  (check-type value (integer -128 127))
+  (if (minusp value)
+      (write-uint8 (+ #x100 value) stream)
+      (write-uint8 value stream))
+  value)
+
+(defun write-int16 (value &optional (stream *ttf-write-output*))
+  (if (minusp value)
+      (write-uint16 (+ #x10000 value) stream)
+      (write-uint16            value  stream))
+  value)
+
+(defun write-fixed (value &optional (stream *ttf-write-output*))
+  (write-uint32 stream))
+
+(defun write-fword (value &optional (stream *ttf-write-output*))
+  (write-int16 stream))
+
+(defun write-fixed2.14 (value &optional (stream *ttf-write-output*))
+  (check-type value (float 0.0 4.0))
+  (write-uint16 (round value (/ 1 #x4000)))
+  value)
+
+(defun write-pstring (string &optional (stream *ttf-write-output*))
+  "Write a Pascal-style length-prefixed string."
+  (let* ((l (length string)))
+    (write-uint8 l stream)
+    (dotimes (i l)
+      (write-uint8 (char-code (aref string i)) stream))
+    string))
+
+(defun write-sequence/ttf (seq &optional (stream *ttf-write-output*))
+  (loop for e across seq
+        do (write-uint8 e stream))
+  seq)
+
 
 (defun advance-file-position (stream n)
   "Move the file position of STREAM ahead by N bytes."

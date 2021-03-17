@@ -49,7 +49,7 @@
 ;;; FIXME: move most/all of this stuff into initialize-instance
 ;;;
 
-(defun open-font-loader-from-stream (input-stream &key (collection-index 0))
+(defun open-font-loader-from-stream (input-stream &key (collection-index 0) raw-bytes)
   (let ((magic (read-uint32 input-stream))
         (font-count))
     (when (/= magic #x00010000 #x74727565 #x74746366)
@@ -91,14 +91,13 @@
                                        :input-stream input-stream
                                        :table-count table-count
                                        :collection-font-cont font-count
+                                       ;; Order is important here
+                                       :search-range (read-uint16 input-stream)
+                                       :entry-selector (read-uint16 input-stream)
+                                       :range-shift (read-uint16 input-stream)
                                        :collection-font-index
                                        (when font-count
                                          collection-index))))
-      ;; skip the unused stuff:
-      ;; searchRange, entrySelector, rangeShift
-      (read-uint16 input-stream)
-      (read-uint16 input-stream)
-      (read-uint16 input-stream)
       (loop repeat table-count
             for tag = (read-uint32 input-stream)
             for checksum = (read-uint32 input-stream)
@@ -107,8 +106,16 @@
             do (setf (gethash tag (tables font-loader))
                      (make-instance 'table-info
                                     :offset offset
+                                    :tag tag
                                     :name (number->tag tag)
                                     :size size)))
+      (when raw-bytes
+        (loop for tbl being the hash-values of (tables font-loader)
+          do (let ((buffer (make-array (size tbl) :element-type '(unsigned-byte 8))))
+            (file-position input-stream (offset tbl))
+            (read-sequence buffer input-stream)
+            (setf (raw-bytes tbl) 
+                  buffer))))
       (load-maxp-info font-loader)
       (load-head-info font-loader)
       (load-kern-info font-loader)
@@ -122,16 +129,18 @@
             (make-array (glyph-count font-loader) :initial-element nil))
       font-loader)))
 
-(defun open-font-loader-from-file (thing &key (collection-index 0))
+(defun open-font-loader-from-file (thing &key (collection-index 0) raw-bytes)
   (let ((stream (open thing
                       :direction :input
                       :element-type '(unsigned-byte 8))))
     (let ((font-loader (open-font-loader-from-stream
-                        stream :collection-index collection-index)))
+                        stream 
+                        :collection-index collection-index
+                        :raw-bytes raw-bytes)))
       (arrange-finalization font-loader stream)
       font-loader)))
 
-(defun open-font-loader (thing &key (collection-index 0))
+(defun open-font-loader (thing &key (collection-index 0) raw-bytes)
   (typecase thing
     (font-loader
      (cond
@@ -141,23 +150,29 @@
         thing)
        (t
         (open-font-loader-from-file (input-stream thing)
-                                    :collection-index collection-index))))
+                                    :collection-index collection-index
+                                    :raw-bytes raw-bytes))))
     (stream
      (if (open-stream-p thing)
-         (open-font-loader-from-stream thing :collection-index collection-index)
+         (open-font-loader-from-stream thing 
+                                       :collection-index collection-index
+                                       :raw-bytes raw-bytes)
          (error "~A is not an open stream" thing)))
     (t
-     (open-font-loader-from-file thing :collection-index collection-index))))
+     (open-font-loader-from-file thing 
+                                 :collection-index collection-index
+                                 :raw-bytes raw-bytes))))
 
 (defun close-font-loader (loader)
   (close (input-stream loader)))
 
-(defmacro with-font-loader ((loader file &key (collection-index 0)) &body body)
+(defmacro with-font-loader ((loader file &key (collection-index 0) raw-bytes) &body body)
   `(let (,loader)
     (unwind-protect
          (progn
            (setf ,loader (open-font-loader ,file
-                                           :collection-index ,collection-index))
+                                           :collection-index ,collection-index
+                                           :raw-bytes ,raw-bytes))
            ,@body)
       (when ,loader
         (close-font-loader ,loader)))))

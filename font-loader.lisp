@@ -65,6 +65,9 @@
    (underline-thickness :accessor underline-thickness :initform 0)
    (postscript-glyph-names :accessor postscript-glyph-names)
    ;; misc
+   (search-range  :accessor search-range  :initarg :search-range)
+   (entry-selector :accessor entry-selector :initarg :entry-selector)
+   (range-shift    :accessor range-shift    :initarg :range-shift)
    (glyph-cache :accessor glyph-cache)
    ;; # of fonts in collection, if loaded from a ttc file
    (collection-font-count :reader collection-font-count :initform nil
@@ -76,7 +79,9 @@
 (defclass table-info ()
   ((name :initarg :name :reader name)
    (offset :initarg :offset :reader offset)
-   (size :initarg :size :reader size)))
+   (tag :initarg :tag :reader tag)
+   (size :initarg :size :reader size)
+   (raw-bytes :initarg :bytes :accessor raw-bytes)))
 
 (defmethod print-object ((object table-info) stream)
   (print-unreadable-object (object stream :type t)
